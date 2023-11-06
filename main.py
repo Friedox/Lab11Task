@@ -120,17 +120,12 @@ class Robot:
         if len(points) != 0:
             self.update_points(points)
 
-        intersection = self.get_intersection_penalty() * 100
-        length = self.get_length_penalty() * 50
-        angles = self.get_angle_penalty() * 25
-        clearance = self.get_clearance_penalty() * 10
+        intersection = self.get_intersection_penalty() * 0.2
+        length = self.get_length_penalty() * 0.5
+        angles = self.get_angle_penalty() * 0.3
+        clearance = self.get_clearance_penalty() * 0.1
 
-        return intersection + length + clearance
-
-        # TODO
-        # calculate total cost of this path
-
-        # hint: you can choose different coefficients for different parts of cost function
+        return intersection + length + clearance + angles
 
     def get_intersection_penalty(self) -> float:
 
@@ -138,14 +133,10 @@ class Robot:
 
         for elem in product(self.obstacles, self.lines):
             if intersection(elem[0].get_polygon(), elem[1]):
-                penalty += 5
+                penalty += 1
 
         return penalty
 
-        # TODO
-        # write code that penalises path for intersection with obstacles
-
-        # hint: lines and obstacles attributes will be populated with needed data
 
     def get_length_penalty(self) -> float:
 
@@ -156,8 +147,6 @@ class Robot:
 
         return penalty
 
-        # TODO
-        # long paths are bad because of energy efficiency concerns. Penalise them
 
     def get_angle_penalty(self) -> float:
         angles = [0]
@@ -168,8 +157,7 @@ class Robot:
 
         return max(angles)
 
-        # TODO
-        # sharp turns are also bad
+
 
     def get_clearance_penalty(self) -> float:
         penalty = 0
@@ -186,9 +174,6 @@ class Robot:
 
         return penalty
 
-        # TODO
-        # It is bad to have paths nearby the obstacles because there is always some degree of uncertainty in robot movement
-        # This uncertainty might be great enough to cause a collision if the path lies nearby the obstacle.
 
     def get_path(self):
         return LineString([p.get_xy() for p in self._points])
@@ -217,9 +202,6 @@ class Chromosome:
 
         return newChrom
 
-        # TODO
-        # mutate chromosome, return a new one
-        # hint: you can create a new chromosome from a gene array
 
     def crossover(self, other: Chromosome) -> List[Chromosome, Chromosome]:
         start = int(np.random.uniform(0, len(self.genes) - 1))
@@ -330,8 +312,8 @@ def ga_iterate(num, mutate_chance=0.8, mutate_min=-15, mutate_max=15):
     return best_path, cost
 
 
-ITERATION_NUMBER = 10
-RUN_NUMBER = 20
+ITERATION_NUMBER = int(input("Iteration Number(ex. 10): "))
+RUN_NUMBER = int(input("Run Number(ex. 5): "))
 
 START = (1, 1)
 END = (10, 10)
