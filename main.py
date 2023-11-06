@@ -8,11 +8,13 @@ from numpy.typing import NDArray
 from shapely.geometry import Polygon
 from shapely.geometry import Point
 from shapely.geometry import LineString
+from shapely import intersection, distance
 from descartes import PolygonPatch
-from typing import List, Tuple
 import random
 import matplotlib.lines as mlines
 import matplotlib.pyplot as plt
+
+from typing import List, Tuple
 
 from shapely.geometry import Point
 import numpy as np
@@ -48,7 +50,7 @@ class MyLineString(LineString):
                           self.coords[1][0] - self.coords[0][0])
 
     def get_angle(self, other):
-        return math.fabs(self.bearing() - other.bearing()) % math.pi
+        return math.fabs(MyLineString.bearing(self) - MyLineString.bearing(other)) % math.pi
 
 
 class Obstacle:
@@ -63,6 +65,14 @@ class Obstacle:
 
     def get_center(self):
         return self.center
+
+    def get_polygon(self):
+        points = []
+
+        for point in self.points:
+            points.append(point.get_xy())
+
+        return Polygon(points)
 
 
 class Robot:
@@ -96,319 +106,128 @@ class Robot:
 
     def update_points(self, points):
         points = [0] + points + [0]
-        self._points = [MyPoint(x, y).rotate(self.theta) for x, y in zip(self.__x_prime_array, points)]
-        self._points = [MyPoint(p.x, p.y) + self.start for p in self._points]
+        self._points = [
+            MyPoint(x, y).rotate(self.theta) for x, y in zip(self.__x_prime_array, points)]
+        self._points = [
+            MyPoint(p.x, p.y) + self.start for p in self._points]
         self.lines = [
             MyLineString([p1.get_xy(), p2.get_xy()]) for
             p1, p2 in zip([self.start] + self._points, self._points + [self.stop])]
 
     def get_cost(self, points=None) -> float:
-        if points is not None:
+        if points is None:
+            points = []
+        if len(points) != 0:
             self.update_points(points)
 
-        # Define coefficients for different cost components
-        length_coeff = 0.1  # Adjust coefficients as needed
-        angle_coeff = 0.2
-        clearance_coeff = 0.3
-        intersection_coeff = 0.4
+        intersection = self.get_intersection_penalty() * 100
+        length = self.get_length_penalty() * 50
+        angles = self.get_angle_penalty() * 25
+        clearance = self.get_clearance_penalty() * 10
 
-        # Calculate cost components
-        length_penalty = length_coeff * self.get_length_penalty(self.lines)
-        angle_penalty = angle_coeff * self.get_angle_penalty(self.lines)
-        clearance_penalty = clearance_coeff * self.get_clearance_penalty(self.lines, self.obstacles)
-        intersection_penalty = intersection_coeff * self.get_intersection_penalty(self.lines, self.obstacles)
+        return intersection + length + clearance
 
-        # Sum up the cost components
-        total_cost = length_penalty + angle_penalty + clearance_penalty + intersection_penalty
+        # TODO
+        # calculate total cost of this path
 
-        return total_cost
+        # hint: you can choose different coefficients for different parts of cost function
 
-    def get_intersection_penalty(self, lines, obstacles) -> float:
-        intersection_penalty = 0.0
-        for i in range(len(lines) - 1):
-            line1 = lines[i]
-            line2 = lines[i + 1]
-            for obstacle in obstacles:
-                if self.do_lines_intersect(line1, obstacle) or self.do_lines_intersect(line2, obstacle):
-                    intersection_penalty += 1.0  # You can adjust the penalty value as needed
-        return intersection_penalty
+    def get_intersection_penalty(self) -> float:
 
-    def do_lines_intersect(self, line, obstacle):
-        # Check if the input line is a LineString object and convert it to a tuple if necessary
-        if isinstance(line, LineString):
-            line_coords = tuple(line.coords)
+        penalty = 0
 
-            if len(line_coords) == 2:
-                x1, y1 = line_coords[0]
-                x2, y2 = line_coords[1]
-            else:
-                # Handle the case where LineString has more than 2 coordinates (e.g., a multi-segment line)
-                # You can choose how to handle such cases, such as considering the first and last points as endpoints
-                x1, y1 = line_coords[0]
-                x2, y2 = line_coords[-1]
-        else:
-            # Handle other cases where line is not a LineString object
-            x1, y1, x2, y2 = line  # Assuming line is already in the format (x1, y1, x2, y2)
+        for elem in product(self.obstacles, self.lines):
+            if intersection(elem[0].get_polygon(), elem[1]):
+                penalty += 5
 
-        # Get the vertices of the obstacle polygon
-        obstacle_vertices = [(p.x, p.y) for p in obstacle.points]
+        return penalty
 
-        # Check for intersection by iterating through the vertices of the obstacle polygon
-        for i in range(len(obstacle_vertices)):
-            x3, y3 = obstacle_vertices[i]
-            x4, y4 = obstacle_vertices[(i + 1) % len(obstacle_vertices)]  # Wrap around to the first vertex
+        # TODO
+        # write code that penalises path for intersection with obstacles
 
-            # Check for intersection between the line segment and each edge of the obstacle polygon
-            if self.do_line_segments_intersect(x1, y1, x2, y2, x3, y3, x4, y4):
-                return True  # Intersection detected
+        # hint: lines and obstacles attributes will be populated with needed data
 
-        return False  # No intersection
+    def get_length_penalty(self) -> float:
 
-    def do_line_segments_intersect(self, x1, y1, x2, y2, x3, y3, x4, y4):
-        # Check for intersection between two line segments (x1, y1) - (x2, y2) and (x3, y3) - (x4, y4)
+        penalty = 0
 
-        # Calculate the direction vectors of the line segments
-        dx1 = x2 - x1
-        dy1 = y2 - y1
-        dx2 = x4 - x3
-        dy2 = y4 - y3
+        for line in self.lines:
+            penalty += line.length
 
-        # Calculate determinants to check if the segments are parallel
-        determinant = dx1 * dy2 - dx2 * dy1
+        return penalty
 
-        if determinant == 0:
-            # Line segments are parallel; check if they overlap
-            if (x1 == x3 and y1 == y3) or (x1 == x4 and y1 == y4):
-                return True
-            if (x2 == x3 and y2 == y3) or (x2 == x4 and y2 == y4):
-                return True
+        # TODO
+        # long paths are bad because of energy efficiency concerns. Penalise them
 
-            # Check if the endpoints of one segment are on the other segment
-            if (
-                    min(x1, x2) <= x3 <= max(x1, x2) and min(y1, y2) <= y3 <= max(y1, y2) or
-                    min(x1, x2) <= x4 <= max(x1, x2) and min(y1, y2) <= y4 <= max(y1, y2) or
-                    min(x3, x4) <= x1 <= max(x3, x4) and min(y3, y4) <= y1 <= max(y3, y4) or
-                    min(x3, x4) <= x2 <= max(x3, x4) and min(y3, y4) <= y2 <= max(y3, y4)
-            ):
-                return True
-            return False
+    def get_angle_penalty(self) -> float:
+        angles = [0]
 
-        # Calculate the parameters for the line equations
-        t1 = ((x3 - x1) * dy2 - (y3 - y1) * dx2) / determinant
-        t2 = ((x3 - x1) * dy1 - (y3 - y1) * dx1) / determinant
+        for i in range(len(self.lines) - 1):
+            angle = MyLineString.get_angle(self.lines[i], self.lines[i + 1])
+            angles.append(angle)
 
-        # Check if the line segments intersect within their parameter ranges (0 to 1)
-        if 0 <= t1 <= 1 and 0 <= t2 <= 1:
-            return True
+        return max(angles)
 
-        return False
+        # TODO
+        # sharp turns are also bad
 
-    def get_length_penalty(self, lines):
-        if lines is not None:
-            length_penalty = sum(self.calculate_segment_length(segment) for segment in lines)
-            return length_penalty
-        else:
-            return 0.0  # Default value if lines are not available
+    def get_clearance_penalty(self) -> float:
+        penalty = 0
 
-    def get_angle_penalty(self, lines):
-        if lines is not None:
-            angle_penalty = self.calculate_angle_penalty(lines)
-            return angle_penalty if angle_penalty is not None else 0.0  # Return 0.0 if no valid angle penalty
-        else:
-            return 0.0  # Default value if lines are not available
+        distances = []
 
-    def calculate_angle_penalty(self, lines):
-        if len(lines) < 3:
-            return 0.0  # Not enough line segments to calculate angles
+        for elem in product(self.lines, self.obstacles):
+            distances.append(distance(elem[1].get_polygon(), elem[0]))
 
-        total_angle = 0.0
+        penalty = 0
 
-        for i in range(1, len(lines) - 1):
-            line1 = lines[i - 1]
-            line2 = lines[i]
-            line3 = lines[i + 1]
+        for dist in distances:
+            penalty += 1 / (dist + 0.1)
 
-            # Calculate the angle between line2 and the average direction of line1 and line3
-            angle = self.calculate_angle(line1, line2, line3)
+        return penalty
 
-            total_angle += angle
-
-        # Calculate the average angle per line segment
-        average_angle = total_angle / (len(lines) - 2)
-
-        # Define a threshold for "sharp" turns and penalize them
-        sharp_turn_threshold = 45.0  # You can adjust this threshold as needed
-        angle_penalty = max(0.0, average_angle - sharp_turn_threshold)
-
-        return angle_penalty
-
-    from shapely.geometry import LineString
-
-    def calculate_angle(self, line1, line2, line3):
-        # Check if the input lines are LineString objects and convert them to tuples if necessary
-        if isinstance(line1, LineString):
-            line1 = tuple(line1.coords[0]) + tuple(line1.coords[-1])
-        if isinstance(line2, LineString):
-            line2 = tuple(line2.coords[0]) + tuple(line2.coords[-1])
-        if isinstance(line3, LineString):
-            line3 = tuple(line3.coords[0]) + tuple(line3.coords[-1])
-
-        # Extract the endpoints of the line segments
-        x1, y1, x2, y2, x3, y3, x4, y4, x5, y5, x6, y6 = line1 + line2 + line3
-
-        # Calculate vectors (x1, y1) -> (x2, y2) and (x3, y3) -> (x4, y4)
-        v1 = (x2 - x1, y2 - y1)
-        v2 = (x4 - x3, y4 - y3)
-
-        # Calculate vectors (x3, y3) -> (x4, y4) and (x5, y5) -> (x6, y6)
-        v3 = (x4 - x3, y4 - y3)
-        v4 = (x6 - x5, y6 - y5)
-
-        # Calculate the dot product of the vectors
-        dot_product = v1[0] * v3[0] + v1[1] * v3[1]
-
-        # Calculate the magnitudes of the vectors
-        magnitude_v1 = math.sqrt(v1[0] ** 2 + v1[1] ** 2)
-        magnitude_v3 = math.sqrt(v3[0] ** 2 + v3[1] ** 2)
-
-        if magnitude_v1 == 0.0 or magnitude_v3 == 0.0:
-            return 0.0  # Avoid division by zero
-
-        # Calculate the angle in radians
-        angle_radians = math.acos(dot_product / (magnitude_v1 * magnitude_v3))
-
-        # Convert the angle to degrees
-        angle_degrees = math.degrees(angle_radians)
-
-        return angle_degrees
-
-    def get_clearance_penalty(self, lines, obstacles):
-        if lines is not None and obstacles is not None:
-            clearance_penalty = self.calculate_clearance_penalty(lines, obstacles)
-            return clearance_penalty if clearance_penalty is not None else 0.0  # Return 0.0 if no valid clearance penalty
-        else:
-            return 0.0  # Default value if lines or obstacles are not available
-
-    def calculate_clearance_penalty(self, lines, obstacles):
-        min_clearance = float('inf')  # Initialize with a large value
-
-        for line in lines:
-            for obstacle in obstacles:
-                # Calculate the distance between the line segment and the obstacle
-                clearance = self.calculate_clearance(line, obstacle)
-                min_clearance = min(min_clearance, clearance)
-
-        # Define a threshold for "too close" to obstacles and penalize accordingly
-        too_close_threshold = 1.0  # You can adjust this threshold as needed
-        clearance_penalty = max(0.0, too_close_threshold - min_clearance)
-
-        return clearance_penalty
-
-    def calculate_clearance(self, line, obstacle):
-        # Check if the input line is a LineString object and convert it to a tuple if necessary
-        if isinstance(line, LineString):
-            line = tuple(line.coords[0]) + tuple(line.coords[-1])
-
-        # Get the center of the obstacle
-        obstacle_center_x = obstacle.center.x
-        obstacle_center_y = obstacle.center.y
-
-        # Extract the endpoints of the line segment
-        x1, y1, x2, y2 = line
-
-        # Calculate the closest point on the line segment to the center of the obstacle
-        closest_x, closest_y = self.closest_point_on_line(x1, y1, x2, y2, obstacle_center_x, obstacle_center_y)
-
-        # Calculate the Euclidean distance between the closest point and the center of the obstacle
-        distance = math.sqrt((closest_x - obstacle_center_x) ** 2 + (closest_y - obstacle_center_y) ** 2)
-
-        return distance
-
-    def closest_point_on_line(self, x1, y1, x2, y2, x3, y3):
-        # Calculate the closest point (x, y) on the line (x1, y1) - (x2, y2) to the point (x3, y3)
-        # Based on the formula for projecting a point onto a line segment
-
-        # Calculate the direction vector of the line segment
-        dx = x2 - x1
-        dy = y2 - y1
-
-        # Calculate the vector from (x1, y1) to (x3, y3)
-        qx = x3 - x1
-        qy = y3 - y1
-
-        # Calculate the dot product of the direction vector and the vector to the point
-        dot_product = dx * qx + dy * qy
-
-        if dot_product <= 0:
-            return x1, y1  # The closest point is at the start of the line segment
-
-        squared_length = dx * dx + dy * dy
-
-        if dot_product >= squared_length:
-            return x2, y2  # The closest point is at the end of the line segment
-
-        t = dot_product / squared_length
-
-        x = x1 + t * dx
-        y = y1 + t * dy
-
-        return x, y
+        # TODO
+        # It is bad to have paths nearby the obstacles because there is always some degree of uncertainty in robot movement
+        # This uncertainty might be great enough to cause a collision if the path lies nearby the obstacle.
 
     def get_path(self):
         return LineString([p.get_xy() for p in self._points])
 
-    def calculate_segment_length(self, segment):
-        if isinstance(segment, LineString):
-            coordinates = list(segment.coords)
-            if len(coordinates) == 2:
-                (x1, y1), (x2, y2) = coordinates
-                # Calculate the Euclidean distance between the two endpoints
-                length = ((x2 - x1) ** 2 + (y2 - y1) ** 2) ** 0.5
-                return length
-
-        # Return 0.0 for invalid or non-LineString segments
-        return 0.0
-
 
 class Chromosome:
-    genes: np.ndarray  # Use np.ndarray, not np.NDArray
+    genes: NDArray
 
-    def __init__(self, genes_len=10, gene_pool_min=-5.0, gene_pool_max=5.0, genes=None):
+    def __init__(self, genes_len=10, gene_pool_min=-5, gene_pool_max=5, genes=None):
         if genes is None:
             self.genes = np.random.uniform(gene_pool_min, gene_pool_max, genes_len)
         else:
             self.genes = genes
 
-    def mutate(self, gene_pool_min: float, gene_pool_max: float) -> Chromosome:
-        mutated_genes = self.genes.copy()  # Create a copy of the current genes
+    def mutate(self, gene_pool_min: int, gene_pool_max: int) -> Chromosome:
+        newChrom = Chromosome(genes=self.genes)
 
-        # Choose a random gene to mutate
-        gene_to_mutate_index = random.randint(0, len(self.genes) - 1)
+        mut_number = int(np.random.uniform(1, len(self.genes)))
 
-        # Generate a new value for the selected gene within the specified range
-        new_gene_value = np.random.uniform(gene_pool_min, gene_pool_max)
+        indeces = [i for i in range(len(self.genes))]
 
-        # Apply the mutation by updating the selected gene
-        mutated_genes[gene_to_mutate_index] = new_gene_value
+        mut_indeces = random.choices(indeces, k=mut_number)
 
-        # Create a new chromosome with the mutated genes
-        mutated_chromosome = Chromosome(mutated_genes)
+        for ind in mut_indeces:
+            newChrom.genes[ind] = int(np.random.uniform(gene_pool_min, gene_pool_max))
 
-        return mutated_chromosome
+        return newChrom
 
-    def crossover(self, other: "Chromosome") -> Tuple["Chromosome", "Chromosome"]:
-        # Determine the crossover point
-        crossover_point = random.randrange(len(self.genes))
+        # TODO
+        # mutate chromosome, return a new one
+        # hint: you can create a new chromosome from a gene array
 
-        # Perform one-point crossover
-        child1_genes = np.concatenate((self.genes[:crossover_point], other.genes[crossover_point:]))
-        child2_genes = np.concatenate((other.genes[:crossover_point], self.genes[crossover_point:]))
+    def crossover(self, other: Chromosome) -> List[Chromosome, Chromosome]:
+        start = int(np.random.uniform(0, len(self.genes) - 1))
+        end = int(np.random.uniform(start, len(self.genes) - 1))
 
-        # Create child chromosomes with the new genes
-        child1 = Chromosome(genes=child1_genes)
-        child2 = Chromosome(genes=child2_genes)
+        self.genes[start:end], other.genes[start:end] = other.genes[start:end], self.genes[start:end]
 
-        return child1, child2
+        return [self, other]
 
     def get_genes(self):
         return list(self.genes).copy()
@@ -430,8 +249,7 @@ class GA:
         self.gen_population(gene_pool_min=-3, gene_pool_max=3, pop_size=pop_size)
 
     def append_population(self, population):
-        if population is not None:
-            self.population = self.population + population
+        self.population = self.population + population
 
     def change_population(self, pop):
         del (self.population[int(len(self.population) / 2):])
@@ -444,40 +262,35 @@ class GA:
         return self.population
 
     def mutation(self, num, gene_pool_min, gene_pool_max):
-        def mutation(self, num, gene_pool_min, gene_pool_max):
-            if num > len(self.population):
-                num = len(self.population)
-            mutated = []
-            mutate_indexes = np.random.randint(0, len(self.population), num)
-            for mutate_index in mutate_indexes:
-                mutated += [self.population[mutate_index].mutate(int(gene_pool_min), int(gene_pool_max))]
-            return mutated
+        if num > len(self.population):
+            raise ValueError("number of mutation is higher than population")
+        mutated = []
+        mutate_indexes = np.random.randint(0, len(self.population), num)
+        for mutate_index in mutate_indexes:
+            mutated = mutated + [
+                self.population[mutate_index].mutate(gene_pool_min, gene_pool_max)]
+        return mutated
 
     def crossover(self, num):
-        if len(self.population) <= 0:
-            return []  # Handle the case where the population is empty
-
-        crossovered = []
-        for _ in range(num):
+        crossover_pop = []
+        for i in range(num):
             s = list(np.random.randint(0, len(self.population), 2))
-            # Rest of your crossover logic goes here
-        return crossovered
+            crossover_pop = crossover_pop + self.population[s[0]].crossover(
+                self.population[s[1]])
+        return crossover_pop
 
     def calc_fitness(self, func, pop=None):
         if pop is None:
-            pop = self.population
-
-        fitness_list = [func(chr_.get_genes()) for chr_ in pop if func(chr_.get_genes()) is not None]
-
-        if not fitness_list:
-            return [], None  # Handle the case where all fitness values are None
-
-        sorted_list = sorted(zip(fitness_list, pop), key=lambda f: f[0])
+            pop = []
+        if len(pop) == 0:
+            fitness_list = [func(chr_.get_genes()) for chr_ in self.population]
+        else:
+            fitness_list = [func(chr_.get_genes()) for chr_ in pop]
+        sorted_list = sorted(zip(fitness_list, self.population),
+                             key=lambda f: f[0])
         # print("chromosome with fitness =",[(a[0], a[1].getGenes()) for a in sorted_list])
         sorted_chromosome = [s[1] for s in sorted_list]
-
         top_fitness = sorted_list[0][0]
-
         if self.top["cost_value"] > top_fitness:
             self.top["cost_value"] = top_fitness
             self.top["chr_"] = sorted_list[0][1]
@@ -491,10 +304,10 @@ grid_size = 15
 pop_size = 20
 r = Robot(MyPoint(0, 0), MyPoint(10, 10), grid_size + 1, None)
 ga = GA(chr_size=grid_size, talent_size=3)
-g = ga.gen_population(gene_pool_min=-5.0, gene_pool_max=5.0, pop_size=pop_size)
+g = ga.gen_population(gene_pool_min=-5, gene_pool_max=5, pop_size=pop_size)
 
 
-def ga_iterate(num, mutate_chance=0.8, mutate_min=-15.0, mutate_max=15.0):
+def ga_iterate(num, mutate_chance=0.8, mutate_min=-15, mutate_max=15):
     global flag
     cost = []
     for i in range(num):
@@ -518,45 +331,43 @@ def ga_iterate(num, mutate_chance=0.8, mutate_min=-15.0, mutate_max=15.0):
 
 
 ITERATION_NUMBER = 10
-RUN_NUMBER = 5
+RUN_NUMBER = 20
 
 START = (1, 1)
 END = (10, 10)
 
 
 def run():
+    counter = 0
     for _ in range(RUN_NUMBER):
         fig, ax = plt.subplots()
         ax.clear()
         best_path, score = ga_iterate(num=ITERATION_NUMBER)
-        if best_path and len(best_path) > 0:
-            r.update_points(list(best_path[0].get_genes()))
+        r.update_points(list(best_path[0].get_genes()))
+        p = r.get_path()
 
-            p = r.get_path()
+        ax.grid(True, which='both', axis='both')
+        draw_start_stop_points(ax, r.start, r.stop)
+        draw_obstacles(ax, r.obstacles)
+        ax.autoscale(enable=True, axis='both', tight=None)
 
-            ax.grid(b=None, which='both', axis='both')
-            draw_start_stop_points(ax, r.start, r.stop)
-            draw_obstacles(ax, r.obstacles)
-            ax.autoscale(enable=True, axis='both', tight=None)
-
-            draw_path(ax, p)
-            print("Fit:", r.get_cost())
-            print("Length penalty: {}".format(r.get_length_penalty()))
-            print("Angle penalty: {}".format(r.get_angle_penalty()))
-            print("Clearance penalty: {}".format(r.get_clearance_penalty()))
-            print("Intersection penalty: {}".format(r.get_intersection_penalty()))
-            plt.show()
-        else:
-            # Handle the case where no valid path is found
-            print("No valid path found.")
+        draw_path(ax, p)
+        counter += 1
+        print("Iteration: ", counter)
+        print("Fit:", r.get_cost())
+        print("Length penalty:{}".format(r.get_length_penalty()))
+        print("Angle penalty:{}".format(r.get_angle_penalty()))
+        print("Clearance penalty:{}".format(r.get_clearance_penalty()))
+        print("Intersection penalty:{}".format(r.get_intersection_penalty()))
+        plt.show()
 
 
 # some function for better viewing
 def draw_start_stop_points(ax, start, end):
-    ax.plot([start.x], [start.y], 'ro', color="blue"),
+    ax.plot([start.x], [start.y], 'o', color="blue"),
     ax.annotate("start", xy=(start.x, start.y),
                 xytext=(start.x, start.y + 0.2))
-    ax.plot([end.x], [end.y], 'ro', color="blue")
+    ax.plot([end.x], [end.y], 'o', color="blue")
     ax.annotate("end", xy=(end.x, end.y),
                 xytext=(end.x, end.y + 0.2))
 
